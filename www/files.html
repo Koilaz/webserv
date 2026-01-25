@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="UTF-8">
+	<Title>Uploaded Files</Title>
+	<link rel="stylesheet" href="/css/style.css">
+	<script src="/js/header.js" defer></script>
+	<script src="/js/footer.js" defer></script>
+	<script src="/js/filesgrid.js" defer></script>
+</head>
+
+<body>
+	<main class="page">
+		<div class="pageLayout">
+			<aside class="marvin">
+				<img src="/image/marvin_files.png" alt="Files Marvin">
+			</aside>
+
+			<div class="pageContent">
+				<div class="container">
+					<div class="whiteBox">
+
+						<h1>Uploaded Files</h1>
+
+						<div id="fileList">
+							<p>Loading files...</p>
+						</div>
+
+						<h2 id="uploadTitle">Upload a file</h2>
+
+						<form id="uploadForm" action="/uploads" method="POST" enctype="multipart/form-data">
+							<label for="fileInput">
+								📁 Click to select files
+								<span id="fileNames" style="display:block; margin-top:10px; font-size:12px;"></span>
+							</label>
+							<input type="file" id="fileInput" name="file" multiple required>
+							<input type="submit" value="Upload">
+						</form>
+						<div id="uploadStatus"></div>
+					</div>
+				</div>
+			</div>
+
+			<div class="pageSpacer" aria-hidden="true"></div>
+		</div>
+	</main>
+</body>
+
+</html>
