@@ -3,116 +3,98 @@
 /*                                                        :::      ::::::::   */
 /*   HttpResponse.hpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: lmarck <lmarck@42.fr>                      +#+  +:+       +#+        */
+/*   By: gdosch <gdosch@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/16 10:33:36 by eschwart          #+#    #+#             */
-/*   Updated: 2026/01/09 19:30:32 by lmarck           ###   ########.fr       */
+/*   Updated: 2026/03/13 11:16:03 by gdosch           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-#pragma once
+#ifndef HTTPRESPONSE_HPP
+# define HTTPRESPONSE_HPP
 
-// Include(s)
-#include <string>
-#include <map>
+// Include(s) ------------------------------------------------------------------
 
+# include "../webserv.hpp"
+# include <string>			// std::string
 
-// Forward declaration(s)
-class HttpRequest;
+// Fallback define(s) - Only on Linux / Mac ------------------------------------
 
-// Class
-class HttpResponse
+#ifndef O_NOFOLLOW
+# define O_NOFOLLOW 0
+#endif
+
+// Forward declaration(s) ------------------------------------------------------
+
+class	HttpRequest;
+
+// Class -----------------------------------------------------------------------
+
+class	HttpResponse
 {
-
 	private:
+
+		// Constant(s)
+
+		static const size_t	HTTP_DATE_BUFFER_SIZE	= 100;	// "Www, DD Mmm YYYY HH:MM:SS GMT\0" fits in 100 bytes
+		static const int	UPLOAD_FILE_PERMISSIONS	= 0644;	// Octal: rw-r--r--
 
 		// Attribute(s)
 
-			int _statusCode; // HTTP status code
-			std::string _statusMessage; // HTTP status message
-			std::map<std::string, std::string> _headers; // Headers
-			std::string _body; // Body
+		int					_statusCode;	// HTTP status code
+		std::string			_statusMessage;	// HTTP status message
+		headerMap			_headers;		// Headers
+		std::string			_body;			// Body
+
+		// Private method(s)
+
+		/** @brief Returns the standard HTTP reason phrase for the given status code. */
+		static std::string	getStatusMessage(int code);
+
+		/** @brief Returns the current UTC date formatted for the HTTP Date header. */
+		static std::string	getHttpDate();
 
 	public:
 
 		// Default constructor
+		
+		HttpResponse();
 
-			HttpResponse();
+		// Getter(s)
+
+		int					getStatus() const											{ return _statusCode; }
+		const std::string&	getBody() const												{ return _body; }
+
+		// Setter(s)
+
+		void				setHeader(const std::string& key, const std::string& value)	{ _headers[key] = value; }
+		void				setBody(const std::string& body)							{ _body = body; }
+		void				setStatus(int code);
 
 		// Public method(s)
 
-			int getStatus();
+		/** @brief Serializes the response to a raw HTTP/1.1 string; omits body for HEAD. */
+		std::string			build(const std::string& method = "GET") const;
 
-			const std::string &getBody() const;
+		/**
+		 * @brief Serves a static file as the HTTP response body.
+		 * @param path The path to the file to serve.
+		 * @param root The location root that bounds what can be served.
+		 * @return 200 on success, or an HTTP error code (403, 404, 500).
+		 */
+		int					serveFile(const std::string& path, const std::string& root);
 
-			/**
-			 * @brief Sets the HTTP status code and corresponding message.
-			 * @param code The HTTP status code.
-			 */
-			void setStatus(int code);
+		/** @brief Generates an HTML directory listing; returns 200, or 404 if not a directory. */
+		int					serveDirectoryListing(const std::string& path, const std::string& uri);
 
-			/**
-			 * @brief Sets a header key-value pair.
-			 * @param key The header field name.
-			 * @param value The header field value.
-			 */
-			void setHeader(const std::string &key, const std::string &value);
+		/** @brief Deletes the file at path; returns 204, or 403/500 on error. */
+		int					serveDelete(const std::string& path, const std::string& uploadRoot);
 
-			/**
-			 * @brief Sets the body of the HTTP response.
-			 * @param body The body content as a string.
-			 */
-			void setBody(const std::string &body);
+		/** @brief Saves uploaded files to uploadDir; returns 201, or 400/403/500 on error. */
+		int					handleUpload(const HttpRequest& request, const std::string& uploadDir);
 
-			/**
-			 * @brief Builds the complete HTTP response as a raw string.
-			 * @return The raw HTTP response string.
-			 */
-			std::string build() const;
-
-			/**
-			 * @brief Serves a static file as the HTTP response body.
-			 * @param path The path to the file to serve.
-			 * @param root The location root that bounds what can be served.
-			 */
-			void serveFile(const std::string &path, const std::string &root);
-
-			/**
-			 * @brief Serves an error page for the given HTTP status code.
-			 * @param code The HTTP status code.
-			 * @param errorPagePath The path to a custom error page file (optional).
-			 */
-			void serveError(int code, const std::string &errorPagePath);
-
-			/**
-			 * @brief Serves a directory listing for the given path.
-			 * @param path The directory path.
-			 */
-			void serveDirectoryListing(const std::string &path, const std::string &uri);
-
-			/**
-			 * @brief Handles DELETE requests for the given path.
-			 * @param path The path to the resource to delete.
-			 * @param uploadRoot The upload directory that bounds deletions.
-			 */
-			void serveDelete(const std::string &path, const std::string &uploadRoot);
-
-			/**
-			 * @brief Handles file upload by saving uploaded files to a directory.
-			 * @param request The HTTP request containing uploaded files.
-			 * @param uploadDir The directory where files should be saved.
-			 */
-			void handleUpload(const HttpRequest &request, const std::string &uploadDir);
-
-	private:
-
-		// Private method(s)
-
-			/**
-			 * @brief Gets the standard status message for a given HTTP status code.
-			 * @param code The HTTP status code.
-			 * @return The corresponding status message as a string.
-			 */
-			std::string getStatusMessage(int code) const;
-
+		/** @brief Responds to OPTIONS with the Allow header listing the provided methods. */
+		void				serveOptions(const stringVector& allowedMethods);
 };
+
+#endif

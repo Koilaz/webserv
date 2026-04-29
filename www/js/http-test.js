@@ -1,10 +1,17 @@
 document.addEventListener('DOMContentLoaded', function() {
 	const sendBtn = document.getElementById('sendBtn');
-	sendBtn.addEventListener('click', sendRequest);
+	if (sendBtn) {
+		sendBtn.addEventListener('click', sendRequest);
+	}
 });
 
 async function sendRequest() {
-	const method = document.getElementById('method').value;
+	const methodSelect = document.getElementById('method');
+	const customMethodInput = document.getElementById('customMethod');
+	let method = methodSelect ? methodSelect.value : 'GET';
+	if (customMethodInput && customMethodInput.value.trim() !== '') {
+		method = customMethodInput.value.trim().toUpperCase();
+	}
 	const url = document.getElementById('url').value;
 	const body = document.getElementById('requestBody').value;
 
@@ -13,15 +20,6 @@ async function sendRequest() {
 	const headersDiv = document.getElementById('responseHeaders');
 	const bodyDiv = document.getElementById('responseBody');
 
-	// Security only on uploads
-	/*if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && !url.startsWith('/uploads/')) {
-		responseBox.classList.add('visible');
-		statusDiv.className = 'status-4xx';
-		statusDiv.innerHTML = '⚠️ POST, PUT and DELETE is only allowed on /uploads/* paths for safety';
-		headersDiv.innerHTML = '';
-		bodyDiv.innerHTML = '<p>Please use a path starting with /uploads/</p>';
-		return;
-	}*/
 
 	// Show loading
 	responseBox.classList.add('visible');
@@ -85,8 +83,31 @@ function escapeHtml(text) {
 
 // Quick test function
 function quickTest(method, url, body = '') {
-	document.getElementById('method').value = method;
-	document.getElementById('url').value = url;
-	document.getElementById('requestBody').value = body;
-	sendRequest();
+	const methodInput = document.getElementById('method');
+	const customMethodInput = document.getElementById('customMethod');
+	const urlInput = document.getElementById('url');
+	const bodyInput = document.getElementById('requestBody');
+
+	if (methodInput && urlInput && bodyInput) {
+		methodInput.value = method;
+		if (customMethodInput) customMethodInput.value = '';
+		urlInput.value = url;
+		bodyInput.value = body;
+		sendRequest();
+		return;
+	}
+
+	const options = { method: method, headers: {} };
+	if ((method === 'POST' || method === 'PUT') && body) {
+		options.body = body;
+		options.headers['Content-Type'] = 'application/json';
+	}
+
+	fetch(url, options)
+		.then(response => {
+			alert('Quick test ' + method + ' ' + url + ' -> ' + response.status + ' ' + response.statusText);
+		})
+		.catch(error => {
+			alert('Quick test failed: ' + error.message);
+		});
 }

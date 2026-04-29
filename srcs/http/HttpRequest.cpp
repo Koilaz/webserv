@@ -3,33 +3,37 @@
 /*                                                        :::      ::::::::   */
 /*   HttpRequest.cpp                                    :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: lmarck <lmarck@42.fr>                      +#+  +:+       +#+        */
+/*   By: gdosch <gdosch@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/16 10:21:18 by eschwart          #+#    #+#             */
-/*   Updated: 2026/01/22 19:03:11 by lmarck           ###   ########.fr       */
+/*   Updated: 2026/03/10 13:07:44 by gdosch           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-// Include(s)
+// Include(s) ------------------------------------------------------------------
+
 #include "HttpRequest.hpp"
 #include "../utils/utils.hpp"
-#include <cstdlib>
-#include <cctype>
-#include <iostream>
-#include <sstream>
-#include <cerrno>
+#include <sstream>				// std::istringstream, std::getline
+#include <cctype>				// std::isalpha, std::isalnum, std::isxdigit
+#include <cstdlib>				// std::strtoul
 
-// Default constructor
+// Default constructor ---------------------------------------------------------
+
 HttpRequest::HttpRequest()
-	: _isComplete(false), _errorCode(0), _headersParsed(false), _bodyStart(0), _isChunked(false), _contentLength(0), _chunkParsePos(0), _chunkTotalSize(0), _chunkDone(false)
-{
-}
+	: _isComplete(false)
+	, _errorCode(0)
+	, _headersParsed(false)
+	, _bodyStart(0)
+	, _isChunked(false)
+	, _contentLength(0)
+	, _chunkParsePos(0)
+	, _chunkTotalSize(0)
+	, _chunkDone(false)
+	, _consumedBytes(0)
+{}
 
-// Public method(s)
-int HttpRequest::getErrorCode() const
-{
-	return _errorCode;
-}
+// Public method(s) ------------------------------------------------------------
 
 bool HttpRequest::setError(int code)
 {
@@ -37,9 +41,9 @@ bool HttpRequest::setError(int code)
 	return false;
 }
 
-std::map<std::string, std::string> HttpRequest::getCookies() const
+cookieMap HttpRequest::getCookies() const
 {
-	std::map<std::string, std::string> cookies;
+	cookieMap cookies;
 	std::string cookieHeader = getHeader("Cookie");
 	if (cookieHeader.empty())
 		return cookies;
@@ -60,7 +64,7 @@ std::map<std::string, std::string> HttpRequest::getCookies() const
 	return cookies;
 }
 
-bool HttpRequest::appendData(const std::string &data)
+bool HttpRequest::appendData(const std::string& data)
 {
 	if (_isComplete)
 		return true;
@@ -86,21 +90,26 @@ bool HttpRequest::appendData(const std::string &data)
 	return _isComplete;
 }
 
-bool HttpRequest::isComplete() const
+std::string HttpRequest::getHeader(const std::string& key) const
 {
-	return _isComplete;
-}
-
-std::string HttpRequest::getHeader(const std::string &key) const
-{
-	std::map<std::string, std::string>::const_iterator it = _headers.find(normalizeHeaderKey(key));
+	headerMap::const_iterator it = _headers.find(toLowercase(key));
 	if (it != _headers.end())
 		return it->second;
 	return "";
 }
 
-// Private method(s)
-bool HttpRequest::parseRequestLine(const std::string &headerBlock)
+std::string HttpRequest::getLeftover() const
+{
+	if (!_isComplete)
+		return "";
+	if (_consumedBytes >= _rawData.size())
+		return "";
+	return _rawData.substr(_consumedBytes);
+}
+
+// Private method(s)------------------------------------------------------------
+
+bool HttpRequest::parseRequestLine(const std::string& headerBlock)
 {
 	// Search the first line
 	size_t firstLineEnd = headerBlock.find("\r\n");
@@ -114,7 +123,7 @@ bool HttpRequest::parseRequestLine(const std::string &headerBlock)
 	std::string requestLine = headerBlock.substr(0, firstLineEnd);
 
 	// Split on " " : "GET /index.html HTTP/1.1"
-	std::vector<std::string> parts = splitTokens(requestLine, ' ');
+	stringVector parts = splitTokens(requestLine, ' ');
 	if (parts.size() != 3)
 		return setError(400); // Bad request
 
@@ -151,7 +160,7 @@ bool HttpRequest::parseRequestLine(const std::string &headerBlock)
 	return true;
 }
 
-bool HttpRequest::parseHeaders(const std::string &headerBlock)
+bool HttpRequest::parseHeaders(const std::string& headerBlock)
 {
 	// skip first line (request line)
 	size_t pos = headerBlock.find("\r\n") + 2;
@@ -186,12 +195,10 @@ bool HttpRequest::parseHeaders(const std::string &headerBlock)
 			for (size_t i = 0; i < key.length(); i++)
 			{
 				unsigned char c = static_cast<unsigned char>(key[i]);
-				bool isValid = (c >= 'a' && c <= 'z') || // lettres minuscules
-							   (c >= 'A' && c <= 'Z') || // lettres majuscules
-							   (c >= '0' && c <= '9') || // chiffres
-							   c == '!' || c == '#' || c == '$' || c == '%' || c == '&' ||
-							   c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
-							   c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
+				bool isValid = std::isalnum(c)
+					|| c == '!' || c == '#' || c == '$' || c == '%' || c == '&'
+					|| c == '\'' || c == '*' || c == '+' || c == '-' || c == '.'
+					|| c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
 
 				if (!isValid)
 					return setError(400); // Bad request
@@ -202,7 +209,7 @@ bool HttpRequest::parseHeaders(const std::string &headerBlock)
 			if (headerCount > MAX_HEADER_COUNT)
 				return setError(431); // Request Header Fields Too Large
 
-			_headers[normalizeHeaderKey(key)] = value;
+			_headers[toLowercase(key)] = value;
 		}
 
 		pos = lineEnd + 2;
@@ -213,7 +220,7 @@ bool HttpRequest::parseHeaders(const std::string &headerBlock)
 
 bool HttpRequest::parseChunked()
 {
-	std::string &data = _rawData;
+	std::string& data = _rawData;
 	size_t pos = _chunkParsePos;
 
 	while (true)
@@ -235,21 +242,17 @@ bool HttpRequest::parseChunked()
 			sizeStr = sizeStr.substr(0, semi);
 
 		// Security: Validate chunk size format (must be hex)
-		if (sizeStr.empty() || sizeStr.length() > 16)
+		// Cap at 8 hex digits so the value always fits in unsigned long
+		// (max 0xFFFFFFFF) on any platform, preventing strtoul overflow
+		// without relying on errno.
+		if (sizeStr.empty() || sizeStr.length() > 8)
 			return setError(400); // Bad request
 
-		for (size_t i = 0; i < sizeStr.length(); i++)
-		{
-			unsigned char x = static_cast<unsigned char>(sizeStr[i]);
-			if (!std::isxdigit(x))
-				return setError(400); // Bad request
-		}
-
-		errno = 0;
-		unsigned long v = std::strtoul(sizeStr.c_str(), NULL, 16);
-		if (errno)
+		char* endptr = NULL;
+		unsigned long v = std::strtoul(sizeStr.c_str(), &endptr, 16);
+		// endptr must point to end of string (all chars consumed = valid hex)
+		if (endptr != sizeStr.c_str() + sizeStr.length())
 			return setError(400); // Bad request
-
 		size_t chunkSize = static_cast<size_t>(v);
 		pos = lineEnd + 2; // skip "\r\n"
 
@@ -269,6 +272,7 @@ bool HttpRequest::parseChunked()
 			_chunkParsePos = pos + 2;
 			_chunkDone = true;
 			_isComplete = true;
+			_consumedBytes = _chunkParsePos; // Exact end after "0\r\n\r\n"
 			return true;
 		}
 
@@ -298,7 +302,7 @@ bool HttpRequest::parseChunked()
 	}
 }
 
-bool HttpRequest::parseMultipart(const std::string &boundary)
+bool HttpRequest::parseMultipart(const std::string& boundary)
 {
 	std::string delimiter = "--" + boundary;
 	std::string endDelimiter = delimiter + "--";
@@ -438,33 +442,35 @@ bool HttpRequest::parse()
 
 			if (!clStr.empty())
 			{
-				for (size_t i = 0; i < clStr.length(); i++)
-				{
-					unsigned char d = static_cast<unsigned char>(clStr[i]);
-					if (!std::isdigit(d))
+				try {
+					// RFC 7230: Content-Length = 1*DIGIT (no sign allowed)
+					if (clStr[0] == '+' || clStr[0] == '-')
 					{
 						_isComplete = true;
 						return setError(400); // Bad request
 					}
-				}
 
-				// Security: Check for overflow (max 20 digits)
-				if (clStr.length() > 20)
-				{
+					int contentLength = parseIntSafe(clStr.c_str(), "Content-Length header");
+
+					// Security: Check Content-Length against max body size
+					if (static_cast<size_t>(contentLength) > MAX_BODY_SIZE)
+					{
+						_isComplete = true;
+						return setError(413); // Payload Too Large
+					}
+
+					_contentLength = static_cast<size_t>(contentLength);
+
+				} catch (const std::exception& e) {
 					_isComplete = true;
-					return setError(413); // Payload Too Large
+					return setError(400); // Bad request
 				}
-
-				size_t contentLength = parseIntSafe(clStr.c_str(), "Content-Length header");
-
-				// Security: Check Content-Length against max body size
-				if (contentLength > MAX_BODY_SIZE)
-				{
-					_isComplete = true;
-					return setError(413); // Payload Too Large
-				}
-
-				_contentLength = contentLength;
+			}
+			else if (_method == "POST" || _method == "PUT")
+			{
+				// POST/PUT requires Content-Length or Transfer-Encoding
+				_isComplete = true;
+				return setError(411); // Length Required
 			}
 		}
 
@@ -516,6 +522,7 @@ bool HttpRequest::parse()
 
 		_body = _rawData.substr(_bodyStart, _contentLength);
 		_isComplete = true;
+		_consumedBytes = _bodyStart + _contentLength;
 
 		std::string contentType = getHeader("content-type");
 		if (!contentType.empty())
@@ -537,5 +544,6 @@ bool HttpRequest::parse()
 	// No body
 	_body = "";
 	_isComplete = true;
+	_consumedBytes = _bodyStart;
 	return true;
 }

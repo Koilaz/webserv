@@ -3,26 +3,19 @@
 #                                                         :::      ::::::::    #
 #    Makefile                                           :+:      :+:    :+:    #
 #                                                     +:+ +:+         +:+      #
-#    By: lmarck <lmarck@42.fr>                      +#+  +:+       +#+         #
+#    By: gdosch <gdosch@student.42.fr>              +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/12/16 10:08:04 by eschwart          #+#    #+#              #
-#    Updated: 2026/01/23 16:48:52 by lmarck           ###   ########.fr        #
+#    Updated: 2026/03/17 10:55:24 by gdosch           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
 MK_DIR := mk
 
-#include ${MK_DIR}/config.mk
-#include ${MK_DIR}/dev.mk
 include ${MK_DIR}/format.mk
 include ${MK_DIR}/git.mk
-#include ${MK_DIR}/libs.mk
-#include ${MK_DIR}/sources.mk
-#include ${MK_DIR}/targets.mk
 
 .DEFAULT_GOAL := all
-
-
 
 # ============================================================================ #
 #                                CONFIGURATION                                 #
@@ -30,7 +23,8 @@ include ${MK_DIR}/git.mk
 
 .SILENT:
 .ONESHELL:
-.PHONY: all clean fclean re kill
+SHELL = /bin/bash
+.PHONY: all clean fclean re ensure-xterm run kill test eval
 
 # Executable name
 NAME = webserv
@@ -38,15 +32,19 @@ NAME = webserv
 # Compiler and flags
 CXX = c++
 CXXFLAGS = -Wall -Wextra -Werror -O3 -std=c++98
-INCLUDES = -I includes
+
+# Compile multi-cpu (linux only comment it on other system)
+ifeq ($(MAKELEVEL),0)
+MAKEFLAGS += -j$(shell nproc)
+endif
 
 # ============================================================================ #
 #                               SOURCE FILES                                   #
 # ============================================================================ #
 
 # Source files by category
-CGI_FILES = CGI.cpp
-CONFIG_FILES = Config.cpp Location.cpp ServerConfig.cpp
+CGI_FILES = Cgi.cpp
+CONFIG_FILES = ConfigParser.cpp Location.cpp ServerBlock.cpp
 HTTP_FILES = HttpRequest.cpp HttpResponse.cpp
 SERVER_FILES = Client.cpp Server.cpp Router.cpp
 UTILS_FILES = MimeTypes.cpp utils.cpp Logger.cpp
@@ -59,10 +57,30 @@ SERVER = $(addprefix srcs/server/, $(SERVER_FILES))
 UTILS = $(addprefix srcs/utils/, $(UTILS_FILES))
 
 # All source files
-SRCS = srcs/main.cpp $(CGI) $(CONFIG) $(HTTP) $(SERVER) $(UTILS)
+SRCS = srcs/webserv.cpp $(CGI) $(CONFIG) $(HTTP) $(SERVER) $(UTILS)
 
 # Object files (mirror source structure in obj/ directory)
 OBJS = $(SRCS:srcs/%.cpp=obj/%.o)
+
+# Header files by category
+CGI_HEADERS = Cgi.hpp
+CONFIG_HEADERS = ConfigParser.hpp Location.hpp ServerBlock.hpp
+HTTP_HEADERS = HttpRequest.hpp HttpResponse.hpp
+SERVER_HEADERS = Client.hpp Router.hpp Server.hpp
+UTILS_HEADERS = Logger.hpp MimeTypes.hpp utils.hpp
+
+# add directory prefixes to header files
+CGI_H = $(addprefix srcs/cgi/, $(CGI_HEADERS))
+CONFIG_H = $(addprefix srcs/config/, $(CONFIG_HEADERS))
+HTTP_H = $(addprefix srcs/http/, $(HTTP_HEADERS))
+SERVER_H = $(addprefix srcs/server/, $(SERVER_HEADERS))
+UTILS_H = $(addprefix srcs/utils/, $(UTILS_HEADERS))
+
+# Common headers
+COMMON_H = srcs/webserv.hpp
+
+# All header file
+HEADERS = $(COMMON_H) $(CGI_H) $(CONFIG_H) $(HTTP_H) $(SERVER_H) $(UTILS_H)
 
 # ============================================================================ #
 #                                  RULES                                       #
@@ -77,9 +95,9 @@ $(NAME): $(OBJS)
 	echo "✓ $(NAME) compiled successfully"
 
 # Compile source files into object files
-obj/%.o: srcs/%.cpp
+obj/%.o: srcs/%.cpp $(HEADERS)
 	mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Remove object files
 clean:
@@ -89,14 +107,40 @@ clean:
 # Remove object files and executable
 fclean: clean
 	rm -f $(NAME)
+	rm -rf YoupiBanane
+	rm -f test_results.json
 	echo "✓ Executable removed"
 
 # Rebuild everything from scratch
-re: fclean all
+re: fclean
+	$(MAKE) --no-print-directory all
+
+# Ensure xterm is installed (WSL2 / Debian-based)
+ensure-xterm:
+	command -v xterm >/dev/null 2>&1 || { \
+		echo "xterm not found, installing..."; \
+		sudo apt-get update -qq && sudo apt-get install -y -qq xterm; \
+	}
+
+# Run the server in a new xterm with config file selection
+run: $(NAME) ensure-xterm
+	pkill webserv 2>/dev/null || true
+	set -- config/*.conf
+	echo "Select a configuration file:"
+	i=1; for f; do echo "  $$i. $$f"; i=$$((i + 1)); done
+	read -n1 -s choice
+	shift $$((choice - 1))
+	conf="$$1"
+	title="$(NAME) | $$conf"
+	xterm \
+		-xrm 'xterm*selectToClipboard: true' \
+		-xrm 'xterm*VT100.Translations: #override \n <Key>Up: ignore() \n <Key>Down: ignore() \n <Key>Left: ignore() \n <Key>Right: ignore()' \
+		-fa 'Monospace' -fs 11 -bg '#1E1E1E' -fg '#CCCCCC' -geometry 145x50 \
+		-T "$$title" -e "bash -c 'stty -echoctl; ./$(NAME) $$conf; stty echoctl; read -p \"Press Enter to close window...\"'" &
 
 # Kill any running instance of the local webserv binary
 kill:
-	@bin="$$(cd "$(dir $(lastword $(MAKEFILE_LIST)))" && pwd)/$(NAME)"; \
+	bin="$$(cd "$(dir $(lastword $(MAKEFILE_LIST)))" && pwd)/$(NAME)"; \
 	pids=$$(pgrep -f "$$bin" || pgrep -x "$(NAME)" || true); \
 	if [ -n "$$pids" ]; then \
 		kill $$pids && echo "✓ Killed running $(NAME): $$pids"; \
@@ -104,78 +148,39 @@ kill:
 		echo "No running $(NAME) found"; \
 	fi
 
-test: re
+test: $(NAME) ensure-xterm
 	-pkill webserv || true
-	gnome-terminal -- bash -c './webserv config/default.conf; exec bash' &
+	xterm \
+		-xrm 'xterm*selectToClipboard: true' \
+		-xrm 'xterm*VT100.Translations: #override \n <Key>Up: ignore() \n <Key>Down: ignore() \n <Key>Left: ignore() \n <Key>Right: ignore()' \
+		-fa 'Monospace' -fs 11 -bg '#1E1E1E' -fg '#CCCCCC' -geometry 145x50 \
+		-T "$(NAME) | webServTester" -e "bash -c 'stty -echoctl; ./$(NAME) config/webServTester.conf; stty echoctl; read -p \"Press Enter to close window...\"'" &
 	sleep 1
-	@# Ensure the Python dependency "requests" is available for the tester
-	@python3 -c 'import requests' >/dev/null 2>&1 || ( \
-		echo "Installing missing Python package: requests"; \
-		python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --upgrade >/dev/null 2>&1; \
+	# Ensure requests is available (critical dependency)
+	python3 -c 'import requests' >/dev/null 2>&1 || ( \
+		echo "Installing Python package: requests"; \
 		python3 -m pip install --user -q requests \
 	)
-	python3 webServeTester.py
+	python3 webServTester.py
 
-eval: re
-	@test -f tester || wget -q https://cdn.intra.42.fr/document/document/44506/tester
-	@test -f cgi_tester || wget -q https://cdn.intra.42.fr/document/document/44507/cgi_tester
-	@chmod +x tester cgi_tester
-	@CGI_TESTER_ABS="$(abspath $(CURDIR)/cgi_tester)"; \
-	cat > config/eval.conf <<-EOF
-	server {
-	    listen 8080;
-	    server_name localhost;
-	    error_page 400 /error_pages/400.html;
-	    error_page 403 /error_pages/403.html;
-	    error_page 404 /error_pages/404.html;
-	    error_page 405 /error_pages/405.html;
-	    error_page 413 /error_pages/413.html;
-	    error_page 500 /error_pages/500.html;
-	    error_page 501 /error_pages/501.html;
-	    error_page 504 /error_pages/504.html;
-		client_max_body_size 120M;
-
-	    # / - GET requests ONLY
-	    location / {
-	        root ./www;
-	        index index.html index.htm;
-	        allowed_methods GET;
-	        autoindex on;
-	    }
-
-		# /post_body - POST requests with maxBody of 100 bytes
-		location /post_body {
-		    root ./www;
-		    allowed_methods POST;
-		    client_max_body_size 100;
-		}
-
-		# /directory/
-		location /directory {
-		    root ./YoupiBanane;
-		    index youpi.bad_extension;
-		    allowed_methods GET POST;
-		    autoindex off;
-		    cgi_extension .bla;
-			cgi_path ../cgi_tester;
-		}
-	}
-	EOF
-
-	@echo "✓ Created config/eval.conf"
-	@mkdir -p YoupiBanane/nop
-	@mkdir -p YoupiBanane/Yeah
-	@touch YoupiBanane/youpi.bad_extension
-	@touch YoupiBanane/youpi.bla
-	@touch YoupiBanane/nop/youpi.bad_extension
-	@touch YoupiBanane/nop/other.pouic
-	@touch YoupiBanane/Yeah/not_happy.bad_extension
-	@-pkill webserv 2>/dev/null || true
-	@./webserv config/eval.conf &
-	@sleep 1
-	./tester http://localhost:8080
-
-clear_eval:
-	@rm -rf YoupiBanane
-	@rm -f tester cgi_tester
-	@rm -f config/eval.conf
+eval: $(NAME) ensure-xterm
+	chmod +x tester cgi_tester
+	mkdir -p YoupiBanane/nop
+	mkdir -p YoupiBanane/Yeah
+	touch YoupiBanane/youpi.bad_extension
+	touch YoupiBanane/youpi.bla
+	touch YoupiBanane/youpla.bla
+	touch YoupiBanane/nop/youpi.bad_extension
+	touch YoupiBanane/nop/other.pouic
+	touch YoupiBanane/Yeah/not_happy.bad_extension
+	chmod 644 YoupiBanane/youpi.bla YoupiBanane/youpla.bla
+	-pkill webserv 2>/dev/null || true
+	xterm \
+		-xrm 'xterm*selectToClipboard: true' \
+		-xrm 'xterm*VT100.Translations: #override \n <Key>Up: ignore() \n <Key>Down: ignore() \n <Key>Left: ignore() \n <Key>Right: ignore()' \
+		-fa 'Monospace' -fs 11 -bg '#1E1E1E' -fg '#CCCCCC' -geometry 145x50 \
+		-T "$(NAME) | 42tester" -e "bash -c 'stty -echoctl; ./$(NAME) config/42tester.conf; stty echoctl; read -p \"Press Enter to close window...\"'" &
+	sleep 1
+	yes "" | ./tester http://localhost:8080
+	echo "✓ Tests completed, stopping server..."
+	-pkill webserv 2>/dev/null || true

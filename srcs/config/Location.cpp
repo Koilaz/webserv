@@ -6,16 +6,18 @@
 /*   By: eschwart <eschwart@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/16 10:20:46 by eschwart          #+#    #+#             */
-/*   Updated: 2026/01/16 10:25:31 by eschwart         ###   ########.fr       */
+/*   Updated: 2026/03/09 13:56:54 by gdosch           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-// Include(s)
-#include "Location.hpp"
-#include "../utils/utils.hpp"
-#include <algorithm>
+// Include(s) ------------------------------------------------------------------
 
-// Default constructor
+#include "Location.hpp"
+#include <algorithm>	// std::find, std::transform
+#include <cctype>		// ::toupper
+
+// Default constructor ---------------------------------------------------------
+
 Location::Location() :
 	_path(""),
 	_root(""),
@@ -23,30 +25,23 @@ Location::Location() :
 	_uploadPath(""),
 	_redirect(""),
 	_cgiExtension(""),
-	_cgiPath("")
+	_cgiPath(""),
+	_maxBodySize(0)
 {
-	_allowedMethods.reserve(3); // GET POST DELETE
-	_index.reserve(4); // generaly no more
+	_allowedMethods.push_back("GET");
+	_allowedMethods.push_back("POST");
+	_allowedMethods.push_back("DELETE");
+	_allowedMethods.push_back("HEAD");
+	_allowedMethods.push_back("OPTIONS");
+	_index.reserve(4); // generally no more
 }
 
-// Setter(s)
-void Location::setPath(const std::string &path)
-{
-	_path = path;
-}
+// Public method(s) ------------------------------------------------------------
 
-void Location::setRoot(const std::string &root)
+void Location::addAllowedMethod(const std::string& method)
 {
-	_root = root;
-}
-
-void Location::addAllowedMethod(const std::string &method)
-{
-	std::string m = toUpperString(method);
-
-	// Checking
-	if (m != "GET" && m != "POST" && m != "DELETE")
-		return;
+	std::string m = method;
+	std::transform(m.begin(), m.end(), m.begin(), ::toupper);
 
 	// Anti double
 	if (isMethodAllowed(m))
@@ -55,7 +50,7 @@ void Location::addAllowedMethod(const std::string &method)
 	_allowedMethods.push_back(m);
 }
 
-void Location::addIndex(const std::string &index)
+void Location::addIndex(const std::string& index)
 {
 	if (std::find(_index.begin(), _index.end(), index) != _index.end())
 		return;
@@ -63,79 +58,8 @@ void Location::addIndex(const std::string &index)
 	_index.push_back(index);
 }
 
-void Location::setAutoIndex(bool autoIndex)
+bool Location::isMethodAllowed(const std::string& method) const
 {
-	_autoIndex = autoIndex;
-}
-
-void Location::setUploadPath(const std::string &path)
-{
-	_uploadPath = path;
-}
-
-void Location::setRedirect(const std::string &redirect)
-{
-	_redirect = redirect;
-}
-
-void Location::setCgiExtension(const std::string &ext)
-{
-	_cgiExtension = ext;
-}
-
-void Location::setCgiPath(const std::string &path)
-{
-	_cgiPath = path;
-}
-
-// Getter(s)
-const std::string &Location::getPath() const
-{
-	return _path;
-}
-
-const std::string &Location::getRoot() const
-{
-	return _root;
-}
-
-const std::vector<std::string> &Location::getAllowedMethods() const
-{
-	return _allowedMethods;
-}
-
-const std::vector<std::string> &Location::getIndex() const
-{
-	return _index;
-}
-
-bool Location::getAutoIndex() const
-{
-	return _autoIndex;
-}
-
-const std::string &Location::getUploadPath() const
-{
-	return _uploadPath;
-}
-
-const std::string &Location::getRedirect() const
-{
-	return _redirect;
-}
-
-const std::string &Location::getCgiExtension() const
-{
-	return _cgiExtension;
-}
-
-const std::string &Location::getCgiPath() const
-{
-	return _cgiPath;
-}
-
-// Public Method(s)
-bool Location::isMethodAllowed(const std::string &method) const {
 	return std::find(_allowedMethods.begin(), _allowedMethods.end(), method)
 		!= _allowedMethods.end();
 }

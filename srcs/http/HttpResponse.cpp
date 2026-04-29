@@ -3,60 +3,55 @@
 /*                                                        :::      ::::::::   */
 /*   HttpResponse.cpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: lmarck <lmarck@42.fr>                      +#+  +:+       +#+        */
+/*   By: gdosch <gdosch@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/16 10:21:41 by eschwart          #+#    #+#             */
-/*   Updated: 2026/01/21 14:36:35 by lmarck           ###   ########.fr       */
+/*   Updated: 2026/03/16 15:31:37 by gdosch           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-// Include(s)
+// Include(s) ------------------------------------------------------------------
+
 #include "HttpResponse.hpp"
 #include "HttpRequest.hpp"
-#include "../utils/utils.hpp"
+#include "../utils/Logger.hpp"
 #include "../utils/MimeTypes.hpp"
-#include <cstdio>  // remove()
-#include <fcntl.h> // open()
-#include <iostream>
-#include <unistd.h> // write(), close()
-#include <cerrno>
+#include "../utils/utils.hpp"
+#include <cstdio>					// std::remove
+#include <ctime>					// std::time, std::gmtime, std::strftime
+#include <dirent.h>					// opendir, readdir, closedir, DIR, struct dirent
+#include <fcntl.h>					// open, O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW
+#include <unistd.h>					// write
 
-// Default constructor
-HttpResponse::HttpResponse() : _statusCode(200),
-							   _statusMessage("OK")
-{
-}
+// Default constructor ---------------------------------------------------------
 
-// Setter(s)
+HttpResponse::HttpResponse()
+	: _statusCode(200)
+	, _statusMessage("OK")
+{}
+
+// Setter(s) -------------------------------------------------------------------
+
 void HttpResponse::setStatus(int code)
 {
 	_statusCode = code;
 	_statusMessage = getStatusMessage(code);
 }
 
-void HttpResponse::setHeader(const std::string &key, const std::string &value)
+// Private method(s) -----------------------------------------------------------
+
+std::string HttpResponse::getHttpDate()
 {
-	_headers[key] = value;
+	time_t now = std::time(NULL);
+	struct tm* gmt = std::gmtime(&now);
+	if (!gmt)
+		return "";
+	char buffer[HTTP_DATE_BUFFER_SIZE];
+	std::strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S GMT", gmt);
+	return std::string(buffer);
 }
 
-void HttpResponse::setBody(const std::string &body)
-{
-	_body = body;
-}
-
-// Getters(s)
-int HttpResponse::getStatus()
-{
-	return _statusCode;
-}
-
-const std::string &HttpResponse::getBody() const
-{
-	return _body;
-}
-
-// Private Method(s)
-std::string HttpResponse::getStatusMessage(int code) const
+std::string HttpResponse::getStatusMessage(int code)
 {
 	switch (code)
 	{
@@ -80,19 +75,26 @@ std::string HttpResponse::getStatusMessage(int code) const
 		return "Method Not Allowed";
 	case 413:
 		return "Payload Too Large";
+	case 414:
+		return "URI Too Long";
+	case 431:
+		return "Request Header Fields Too Large";
 	case 500:
 		return "Internal Server Error";
 	case 501:
 		return "Not Implemented";
 	case 504:
 		return "Gateway Timeout";
+	case 505:
+		return "HTTP Version Not Supported";
 	default:
 		return "Unknown";
 	}
 }
 
-// Public Method(s)
-std::string HttpResponse::build() const
+// Public method(s) ------------------------------------------------------------
+
+std::string HttpResponse::build(const std::string& method) const
 {
 	std::string response;
 
@@ -102,10 +104,11 @@ std::string HttpResponse::build() const
 	// Standard Headers
 	response += "Server: webserv/1.0\r\n";
 	response += "Date: " + getHttpDate() + "\r\n";
-	response += "Connection: close\r\n";
+	if (_headers.find("Connection") == _headers.end())
+		response += "Connection: close\r\n"; // default if not specified
 
 	// Custom Headers
-	std::map<std::string, std::string>::const_iterator it;
+	headerMap::const_iterator it;
 
 	for (it = _headers.begin(); it != _headers.end(); ++it)
 		response += it->first + ": " + it->second + "\r\n";
@@ -117,76 +120,27 @@ std::string HttpResponse::build() const
 	// Separate headers from body
 	response += "\r\n";
 
-	// Body
-	response += _body;
+	// Body (skip for HEAD method)
+	if (method != "HEAD")
+		response += _body;
 
 	return response;
 }
 
-void HttpResponse::serveError(int code, const std::string &errorPagePath)
-{
-	setStatus(code);
-
-	try
-	{
-		if (!errorPagePath.empty() && fileExists(errorPagePath))
-		{
-			std::string content = readFile(errorPagePath);
-			setHeader("Content-Type", "text/html");
-			setBody(content);
-			return;
-		}
-
-		std::string defaultErrorPage = "www/error_pages/" + intToString(code) + ".html";
-		if (fileExists(defaultErrorPage))
-		{
-			std::string content = readFile(defaultErrorPage);
-			setHeader("Content-Type", "text/html");
-			setBody(content);
-			return;
-		}
-	}
-	catch (const std::exception &e)
-	{
-		std::cerr << "[HttpResponse] readFile error: " << e.what() << std::endl;
-	}
-
-	// Default error page
-	std::string body =
-		"<html>\n"
-		"<head><title>Error " +
-		intToString(code) + "</title></head>\n"
-							"<body>\n"
-							"<h1>Error " +
-		intToString(code) + " - " + getStatusMessage(code) + "</h1>"
-															 "<p>The requested resource could not be found.</p>"
-															 "</body>\n"
-															 "</html>";
-
-	setHeader("Content-Type", "text/html");
-	setBody(body);
-}
-
-void HttpResponse::serveFile(const std::string &path, const std::string &root)
+int HttpResponse::serveFile(const std::string& path, const std::string& root)
 {
 	// Check if it's a directory + security check
 	if (isDirectory(path) || !isPathSafe(path, root))
-	{
-		serveError(403, "");
-		return;
-	}
+		return 403;
 
 	// Check if file exists
 	if (!fileExists(path))
-	{
-		serveError(404, "");
-		return;
-	}
+		return 404;
 
 	try
 	{
 		// Read file content
-		std::string content = readFile(path);
+		std::string content = readFile(path, "HttpResponse");
 
 		// Get MIME type (default to application/octet-stream if no extension)
 		std::string contentType = "application/octet-stream";
@@ -194,9 +148,9 @@ void HttpResponse::serveFile(const std::string &path, const std::string &root)
 		try
 		{
 			std::string ext = getFileExtension(path);
-			contentType = MimeTypes::get(ext); // Assign, not declare!
+			contentType = MimeTypes::get(ext);
 		}
-		catch (const std::exception &)
+		catch (const std::exception&)
 		{
 			// No extension or hidden file → use default MIME type
 		}
@@ -205,17 +159,18 @@ void HttpResponse::serveFile(const std::string &path, const std::string &root)
 		setStatus(200);
 		setHeader("Content-Type", contentType);
 		setBody(content);
+		return 200;
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
-		std::cerr << "[HttpResponse] serveFile error: " << e.what() << std::endl;
-		serveError(500, "");
+		Logger::logMessage(RED "[HttpResponse] Error: " RESET "serveFile: " + std::string(e.what()));
+		return 500;
 	}
 }
 
 // Security: Escape HTML special characters to prevent XSS injection
 // Converts &, <, >, " to their HTML entities
-static std::string htmlEscape(const std::string &s)
+static std::string htmlEscape(const std::string& s)
 {
 	std::string out;
 
@@ -237,28 +192,48 @@ static std::string htmlEscape(const std::string &s)
 	return out;
 }
 
-void HttpResponse::serveDirectoryListing(const std::string &path, const std::string &uri)
+static stringVector listDirectory(const std::string& path)
+{
+	stringVector entries;
+
+	DIR* dir = opendir(path.c_str());
+	if (!dir)
+	{
+		Logger::logMessage(RED "[HttpResponse] Error: " RESET "listDirectory: opendir failed for path: " + path);
+		return entries;
+	}
+
+	struct dirent* entry;
+	while ((entry = readdir(dir)))
+	{
+		std::string name = entry->d_name;
+		if (name != "." && name != "..")
+			entries.push_back(name);
+	}
+
+	closedir(dir);
+	return entries;
+}
+
+int HttpResponse::serveDirectoryListing(const std::string& path, const std::string& uri)
 {
 	// Check if path is a directory
 	if (!isDirectory(path))
-	{
-		serveError(404, "");
-		return;
-	}
+		return 404;
 
 	// Get list of files/directories
-	std::vector<std::string> entries = listDirectory(path);
+	stringVector entries = listDirectory(path);
 
 	// Generate HTML page with correct URI for links
 	std::string body =
 		"<html>\n"
 		"<head><title>Index of " +
 		uri + "</title></head>\n"
-			  "<body>\n"
-			  "<h1>Index of " +
+			"<body>\n"
+			"<h1>Index of " +
 		uri + "</h1>\n"
-			  "<hr>\n"
-			  "<ul>";
+			"<hr>\n"
+			"<ul>";
 
 	// Add each entry as a clickable link
 	for (size_t i = 0; i < entries.size(); ++i)
@@ -284,30 +259,31 @@ void HttpResponse::serveDirectoryListing(const std::string &path, const std::str
 	setStatus(200);
 	setHeader("Content-Type", "text/html");
 	setBody(body);
+	return 200;
 }
 
-void HttpResponse::serveDelete(const std::string &path, const std::string &uploadRoot)
+int HttpResponse::serveDelete(const std::string& path, const std::string& uploadRoot)
 {
 	// Check if file exists and not a directory
 	if (isDirectory(path) || !isPathSafe(path, uploadRoot))
-	{
-		serveError(403, "");
-		return;
-	}
+		return 403;
 
 	// Try to delete the file
 	if (!std::remove(path.c_str()))
+	{
 		setStatus(204); // Success: 204 No Content
+		return 204;
+	}
 	else
 	{
-		std::cerr << "[HttpResponse] serveDelete: remove failed for " << path << std::endl;
-		serveError(500, "");
+		Logger::logMessage(RED "[HttpResponse] Error: " RESET "serveDelete: remove failed for " + path);
+		return 500;
 	}
 }
 
 // Security: Sanitize filename to prevent path traversal and injection attacks
 // Replaces dangerous characters: "..", "/", "\", null bytes, control chars
-static std::string sanitizeFilename(const std::string &filename)
+static std::string sanitizeFilename(const std::string& filename)
 {
 	std::string safe = filename;
 
@@ -335,7 +311,7 @@ static std::string sanitizeFilename(const std::string &filename)
 
 // Security: Write all data handling partial writes and EINTR interruptions
 // Returns true if all data written successfully, false on error
-static bool writeAll(int fd, const char *buf, size_t len)
+static bool writeAll(int fd, const char* buf, size_t len)
 {
 	size_t off = 0;
 
@@ -350,23 +326,17 @@ static bool writeAll(int fd, const char *buf, size_t len)
 	return true;
 }
 
-void HttpResponse::handleUpload(const HttpRequest &request, const std::string &uploadDir)
+int HttpResponse::handleUpload(const HttpRequest& request, const std::string& uploadDir)
 {
 
 	// Security check: only allow uploads inside the configured upload directory
 	if (!isPathSafe(uploadDir, uploadDir))
-	{
-		serveError(403, "");
-		return;
-	}
+		return 403;
 
-	const std::vector<UploadedFile> &files = request.getUploadedFiles();
+	const std::vector<UploadedFile>& files = request.getUploadedFiles();
 
 	if (files.empty())
-	{
-		serveError(400, ""); // Bad request - no files
-		return;
-	}
+		return 400;
 
 	// Save each file
 	for (size_t i = 0; i < files.size(); ++i)
@@ -375,35 +345,48 @@ void HttpResponse::handleUpload(const HttpRequest &request, const std::string &u
 		std::string safeName = sanitizeFilename(files[i].filename);
 		std::string filePath = uploadDir + '/' + safeName;
 		if (!isPathSafe(filePath, uploadDir))
-		{
-			serveError(403, "");
-			return;
-		}
+			return 403;
 
 		// Open file for writing
 		// Security: O_NOFOLLOW prevents symlink attacks (don't follow symbolic links)
-		int fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0644);
+		int fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, UPLOAD_FILE_PERMISSIONS);
 
 		if (fd < 0)
 		{
-			std::cerr << "[handleUpload] open failed: " << filePath << std::endl;
-			serveError(500, ""); // Failed to save
-			return;
+			Logger::logMessage(RED "[HttpResponse] Error: " RESET "handleUpload: open failed: " + filePath);
+			return 500;
 		}
 
 		// Write content (handle partial write)
 		if (!writeAll(fd, files[i].content.data(), files[i].content.size()))
 		{
-			safeClose(fd);
-			std::cerr << "[handleUpload] write failed: " << filePath << std::endl;
-			serveError(500, "");
-			return;
+			safeClose(fd, "HttpResponse");
+			Logger::logMessage(RED "[HttpResponse] Error: " RESET "handleUpload: write failed: " + filePath);
+			return 500;
 		}
-		safeClose(fd);
+		safeClose(fd, "HttpResponse");
 	}
 
 	// Success 201 Created
 	setStatus(201);
 	setHeader("Content-Type", "text/html");
 	setBody("<html><body><h1>Upload successful!</h1></body></html>");
+	return 201;
+}
+
+void HttpResponse::serveOptions(const stringVector& allowedMethods)
+{
+	// Build the Allow header with comma-separated methods
+	std::string allow;
+	for (size_t i = 0; i < allowedMethods.size(); ++i)
+	{
+		if (i > 0)
+			allow += ", ";
+		allow += allowedMethods[i];
+	}
+
+	setStatus(200);
+	setHeader("Allow", allow);
+	setHeader("Content-Type", "text/plain");
+	setBody("");
 }

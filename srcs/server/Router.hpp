@@ -6,44 +6,71 @@
 /*   By: gdosch <gdosch@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/23 14:23:32 by gdosch            #+#    #+#             */
-/*   Updated: 2026/01/06 13:54:03 by gdosch           ###   ########.fr       */
+/*   Updated: 2026/03/14 22:50:38 by gdosch           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-#pragma once
+#ifndef ROUTER_HPP
+# define ROUTER_HPP
 
-// Include(s)
-#include "../config/ServerConfig.hpp"
-#include "../http/HttpRequest.hpp"
-#include <string>
+// Include(s) ------------------------------------------------------------------
 
-// Structure(s)
-struct RouteMatch {
+# include <string>	// std::string
 
-	const Location* location;
-	std::string filePath;
-	bool isRedirect;
-	std::string redirectUrl;
-	int statusCode;
-	bool isCGI;
-	std::string serverName;
-	int serverPort;
+// Forward declaration(s) ------------------------------------------------------
 
+class	HttpRequest;
+class	Location;
+class	ServerBlock;
+
+// Structure(s) ----------------------------------------------------------------
+
+struct	RouteMatch
+{
+	// Attribute(s)
+	const Location*	location;		// Matched location configuration
+	std::string		filePath;		// Resolved file path for the request
+	std::string		pathInfo;		// Relative path for CGI PATH_INFO
+	bool			isRedirect;		// Indicates if this is a redirect response
+	std::string		redirectUrl;	// Redirect destination URL
+	int				statusCode;		// HTTP status code for the response
+	bool			isCGI;			// Indicates if this request should be handled by CGI
+	std::string		serverName;		// Server name for this request
+	int				serverPort;		// Server port for this request
+
+	// Default constructor
+	RouteMatch()
+		: location(NULL)
+		, filePath()
+		, pathInfo()
+		, isRedirect(false)
+		, redirectUrl()
+		, statusCode(200)
+		, isCGI(false)
+		, serverName()
+		, serverPort(0)
+	{}
 };
 
-// Class
-class Router {
+// Class -----------------------------------------------------------------------
 
-	public:
-	
-		// Public method(s)
-	
-			RouteMatch matchRoute(const ServerConfig& config, const HttpRequest& request) const;
-
+class	Router
+{
 	private:
 
 		// Private method(s)
-	
-			const Location* findMatchingLocation(const ServerConfig& config, const std::string& uri) const;
+
+		/** @brief Returns the location block with the longest matching prefix for uri, or NULL. */
+		const Location*	findMatchingLocation(const ServerBlock& server, const std::string& uri) const;
+
+	public:
+
+		// Public method(s)
+
+		/** @brief Resolves request to a RouteMatch (file path, CGI flag, status code, etc.). */
+		RouteMatch		matchRoute(const ServerBlock& server, const HttpRequest& request) const;
+
 
 };
+
+#endif
